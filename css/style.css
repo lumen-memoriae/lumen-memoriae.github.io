@@ -91,7 +91,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,summary:focus-vi
 .field{display:block; border:0; padding:0; margin:0 0 14px; font-family:var(--hand); font-size:22px; color:#5d4e56}
 .field small{font-size:17px; color:#8f7f86}
 .field legend{padding:0; margin-bottom:6px}
-.field input[type=text],.field textarea,.field select{display:block; width:100%; margin-top:4px; border:1px solid rgba(42,35,48,.2); border-radius:8px;
+.field input[type=text],.field input[type=password],.field textarea,.field select{display:block; width:100%; margin-top:4px; border:1px solid rgba(42,35,48,.2); border-radius:8px;
   background:#fffaf1; color:var(--ink); padding:10px 12px; font:500 19px/1.4 var(--serif); resize:vertical}
 .field input[type=color]{display:block; margin-top:6px; width:64px; height:38px; border:1px solid rgba(42,35,48,.2); border-radius:8px; background:#fffaf1; padding:3px; cursor:pointer}
 .drop{position:relative; display:grid; place-items:center; min-height:170px; margin-bottom:16px; border:2px dashed rgba(42,35,48,.25); border-radius:6px;

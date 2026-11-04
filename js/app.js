@@ -72,10 +72,19 @@ function disposeTree(o) {
 }
 
 /* ---------- данные: что сейчас висит и стоит ---------- */
+let cloudFrames = [];               // рамки из общей базы (если она подключена)
+const safeSrc = s => typeof s === 'string' && s.startsWith('data:image/');
 function visibleFrames() {
   const hidden = new Set(local.hidden), seen = new Set(), out = [];
-  const edits = local.edits || {};
-  CONTENT.frames.concat(local.frames).forEach(f => { if (!hidden.has(f.id) && !seen.has(f.id)) { seen.add(f.id); out.push(edits[f.id] ? Object.assign({}, f, edits[f.id]) : f); } });
+  if (Cloud.ok) {
+    // общая полка: рамки из content.js (с правками хозяина) + рамки посетителей
+    const byId = new Map(cloudFrames.map(d => [d.id, d]));
+    CONTENT.frames.forEach(f => { const o = byId.get(f.id); seen.add(f.id); if (o && o.hidden) return; out.push(o ? Object.assign({}, f, o, { builtin: true, src: safeSrc(o.src) ? o.src : f.src }) : Object.assign({ builtin: true }, f)); });
+    cloudFrames.forEach(d => { if (seen.has(d.id) || d.hidden || d.override || !safeSrc(d.src)) return; seen.add(d.id); out.push(d); });
+  } else {
+    const edits = local.edits || {};
+    CONTENT.frames.concat(local.frames).forEach(f => { if (!hidden.has(f.id) && !seen.has(f.id)) { seen.add(f.id); out.push(edits[f.id] ? Object.assign({}, f, edits[f.id]) : f); } });
+  }
   const ph = CONTENT.placeholders || [];
   for (let k = 0; out.length < (CONTENT.minFrames || 0) && ph.length; k++) out.push(Object.assign({ placeholder: true, id: 'ph' + k, src: '' }, ph[k % ph.length]));
   return out;
@@ -265,14 +274,26 @@ function openFrame(i) {
     const f = FRAMES[i];
     $('pTitle').textContent = f.title || ''; $('pCount').textContent = `${i + 1} / ${frames.length}`;
     $('pText').textContent = f.text || ''; $('pText').hidden = !f.text;
-    $('pEdit').hidden = !!f.placeholder;
+    $('pEdit').hidden = !canEdit(f); $('pDel').hidden = !(Cloud.ok && Cloud.isAdmin && !f.placeholder); resetDel();
     panel.className = 'panel ' + (portrait ? 'below' : 'side') + ' on'; panel.scrollTop = 0; $('shade').className = (portrait ? 'below' : 'side') + ' on';
   }, reduceMotion ? 0 : 600);
 }
 function closeFrame() {
   if (view !== 'zoom') return; view = 'home'; current = -1; panel.classList.remove('on'); $('shade').classList.remove('on');
   setHome(pan.target); go(home.pos.clone(), home.tgt.clone(), 1.1);
-  setTimeout(() => { if (view === 'home') { pill.classList.remove('hidden'); topbar.classList.remove('hidden'); } }, 900);
+  setTimeout(() => { if (view === 'home') { pill.classList.remove('hidden'); topbar.classList.remove('hidden'); if (refreshPending) scheduleRefresh(); } }, 900);
+}
+/* кто может менять рамку: в общей полке — автор или хозяин, иначе — все (локально) */
+function canEdit(f) {
+  if (!f || f.placeholder) return false;
+  if (!Cloud.ok) return true;
+  return Cloud.isAdmin || (!!f.owner && f.owner === Cloud.uid);
+}
+/* общая полка обновилась: перестраиваем, но не посреди просмотра рамки или заполнения формы */
+let refreshPending = false;
+function scheduleRefresh() {
+  if (view === 'zoom' || document.querySelector('dialog[open]')) { refreshPending = true; return; }
+  refreshPending = false; refresh();
 }
 $('close').addEventListener('click', closeFrame);
 $('prev').addEventListener('click', () => openFrame(current - 1));
@@ -371,6 +392,17 @@ function readPhoto(file) {
     im.src = url;
   });
 }
+/* уменьшить фото, пока оно не влезет в документ базы (лимит ~1 МБ) */
+async function fitPhoto(src, maxLen = 900000) {
+  let im = await loadImg(src); if (!im) return src;
+  let w = im.naturalWidth || im.width, h = im.naturalHeight || im.height, q = .84, out = src;
+  for (let k = 0; out.length > maxLen && k < 8; k++) {
+    const s = Math.min(1, 1400 / Math.max(w, h)) * Math.pow(.85, k);
+    const [c, x] = cv(Math.round(w * s), Math.round(h * s)); x.drawImage(im, 0, 0, c.width, c.height);
+    out = c.toDataURL('image/jpeg', Math.max(.6, q - k * .04));
+  }
+  return out;
+}
 async function takePhoto(file) {
   try { pendingPhoto = await readPhoto(file); $('fPreview').src = pendingPhoto; $('fPreview').hidden = false; $('dropHint').hidden = true; $('fErr').hidden = true; }
   catch (e) { $('fErr').textContent = e.message; $('fErr').hidden = false; }
@@ -402,13 +434,25 @@ $('frameForm').addEventListener('submit', async e => {
   $('fSubmit').disabled = true;
   const data = { src: pendingPhoto, frame: (document.querySelector('input[name=fstyle]:checked') || {}).value || 'wood', title, text: $('fText').value.trim() };
   let f;
-  if (editingId) {
+  if (Cloud.ok) {
+    try {
+      data.src = await fitPhoto(data.src);
+      if (editingId) {
+        f = { id: editingId };
+        const cur = FRAMES.find(x => x.id === editingId), inCloud = cloudFrames.some(x => x.id === editingId);
+        if (cur && cur.builtin && !inCloud) await Cloud.override(editingId, data); else await Cloud.update(editingId, data);
+      } else f = { id: await Cloud.add(data) };
+    } catch (err) {
+      console.warn('[shelf] запись не удалась', err); $('fSubmit').disabled = false;
+      $('fErr').textContent = 'Не получилось сохранить: проверьте интернет и попробуйте ещё раз'; $('fErr').hidden = false; return;
+    }
+  } else if (editingId) {
     f = { id: editingId };
     const own = local.frames.find(x => x.id === editingId);
     if (own) Object.assign(own, data);                       // своя рамка — меняем на месте
     else { local.edits = local.edits || {}; local.edits[editingId] = data; } // рамка из content.js — запоминаем правку
-  } else { f = Object.assign({ id: uid('f') }, data); local.frames.push(f); }
-  await persist();
+    await persist();
+  } else { f = Object.assign({ id: uid('f') }, data); local.frames.push(f); await persist(); }
   $('fSubmit').disabled = false; dlgFrame.close();
   const wasEdit = !!editingId; editingId = null;
   if (wasEdit) { view = 'home'; current = -1; panel.classList.remove('on'); }
@@ -423,6 +467,39 @@ function removeItem(id, kind) {
   if (local.edits) delete local.edits[id];
   if ((kind === 'frames' ? CONTENT.frames : CONTENT.objects).some(x => x.id === id) && !local.hidden.includes(id)) local.hidden.push(id);
 }
+
+/* --- удалить рамку: только хозяин в общей полке, вторым нажатием --- */
+const pDel = $('pDel'); let delArmed = 0;
+function resetDel() { clearTimeout(delArmed); delArmed = 0; pDel.classList.remove('sure'); pDel.textContent = 'удалить'; }
+pDel.addEventListener('click', async () => {
+  if (!delArmed) { pDel.classList.add('sure'); pDel.textContent = 'точно удалить?'; delArmed = setTimeout(resetDel, 5000); return; }
+  resetDel();
+  const f = FRAMES[current]; if (!f || f.placeholder || !Cloud.ok || !Cloud.isAdmin) return;
+  try {
+    const inCloud = cloudFrames.some(x => x.id === f.id);
+    if (f.builtin) { if (inCloud) await Cloud.update(f.id, { hidden: true }); else await Cloud.override(f.id, { hidden: true }); }
+    else await Cloud.remove(f.id);
+    closeFrame(); toast('рамка удалена');
+  } catch (err) { console.warn(err); toast('не получилось удалить'); }
+});
+
+/* --- вход хозяина (только по #admin) --- */
+const dlgLogin = $('dlgLogin');
+function syncLogin() {
+  const on = Cloud.ok;
+  $('loginBtn').hidden = !on || Cloud.isAdmin; $('logoutBtn').hidden = !on || !Cloud.isAdmin;
+  $('logoutBtn').textContent = Cloud.isAdmin ? `выйти (${Cloud.email || 'хозяин'})` : 'выйти';
+  $('resetBtn').hidden = on;
+}
+$('loginBtn').addEventListener('click', () => { closeMenu(); $('loginForm').reset(); $('lErr').hidden = true; dlgLogin.showModal(); });
+$('logoutBtn').addEventListener('click', async () => { closeMenu(); await Cloud.logout(); toast('вы вышли'); });
+$('loginForm').addEventListener('submit', async e => {
+  e.preventDefault(); $('lSubmit').disabled = true;
+  try { await Cloud.login($('lEmail').value.trim(), $('lPass').value); dlgLogin.close(); toast('вы вошли как хозяин'); }
+  catch (err) { $('lErr').textContent = 'Неверная почта или пароль'; $('lErr').hidden = false; }
+  $('lSubmit').disabled = false;
+});
+document.querySelectorAll('dialog.sheet').forEach(d => d.addEventListener('close', () => { if (refreshPending) setTimeout(scheduleRefresh, 50); }));
 
 /* --- меню «⋯»: экспорт и сброс. Скрыто; видно, если открыть сайт с #admin в конце адреса --- */
 function syncAdmin() { $('more').hidden = location.hash !== '#admin'; }
@@ -456,6 +533,16 @@ $('resetBtn').addEventListener('click', async e => {
   decor.shelfMap = woodCanvas(false);
   decor.shelfMat = new THREE.MeshStandardMaterial({ map: decor.shelfMap, roughness: .75 });
   local = await Store.load();
+  if (await Cloud.init()) {
+    // ждём первую загрузку общей полки (не дольше 8 секунд), дальше обновляемся вживую
+    await new Promise(res => {
+      let first = true; const t = setTimeout(() => { if (first) { first = false; res(); } }, 8000);
+      Cloud.watch(list => { cloudFrames = list; if (first) { first = false; clearTimeout(t); res(); } else scheduleRefresh(); },
+        err => { console.warn('[shelf] чтение общей полки', err); if (first) { first = false; clearTimeout(t); res(); } });
+    });
+    Cloud.onAuth(() => { syncLogin(); if (view === 'zoom' && current >= 0) { $('pEdit').hidden = !canEdit(FRAMES[current]); $('pDel').hidden = !(Cloud.isAdmin && !FRAMES[current].placeholder); } });
+  }
+  syncLogin();
   await rebuildFrames(); rebuildObjects();
   renderer.setSize(innerWidth, innerHeight, false); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
   layout(); camPos.copy(home.pos); camTgt.copy(home.tgt);
