@@ -259,13 +259,13 @@ function openFrame(i) {
   i = (i + frames.length) % frames.length; current = i; view = 'zoom';
   const v = zoomView(i); go(v.pos, v.tgt);
   pill.classList.add('hidden'); topbar.classList.add('hidden'); closeMenu();
-  panel.classList.remove('on'); resetDel();
+  panel.classList.remove('on');
   setTimeout(() => {
     if (current !== i || view !== 'zoom') return;
     const f = FRAMES[i];
     $('pTitle').textContent = f.title || ''; $('pCount').textContent = `${i + 1} / ${frames.length}`;
     $('pText').textContent = f.text || ''; $('pText').hidden = !f.text;
-    $('pDel').hidden = !!f.placeholder; $('pEdit').hidden = !!f.placeholder;
+    $('pEdit').hidden = !!f.placeholder;
     panel.className = 'panel ' + (portrait ? 'below' : 'side') + ' on'; panel.scrollTop = 0; $('shade').className = (portrait ? 'below' : 'side') + ' on';
   }, reduceMotion ? 0 : 600);
 }
@@ -417,16 +417,6 @@ $('frameForm').addEventListener('submit', async e => {
   if (idx >= 0) setTimeout(() => openFrame(idx), 250);
 });
 
-/* --- снять рамку (с подтверждением вторым нажатием) --- */
-const pDel = $('pDel'); let delArmed = 0;
-function resetDel() { clearTimeout(delArmed); delArmed = 0; pDel.classList.remove('sure'); pDel.textContent = 'удалить'; }
-pDel.addEventListener('click', async () => {
-  if (!delArmed) { pDel.classList.add('sure'); pDel.textContent = 'точно удалить?'; delArmed = setTimeout(resetDel, 5000); return; }
-  resetDel();
-  const f = FRAMES[current]; if (!f || f.placeholder) return;
-  removeItem(f.id, 'frames');
-  closeFrame(); await persist(); await refresh(); toast('рамка удалена');
-});
 function removeItem(id, kind) {
   const i = local[kind].findIndex(x => x.id === id);
   if (i >= 0) local[kind].splice(i, 1);
@@ -434,7 +424,9 @@ function removeItem(id, kind) {
   if ((kind === 'frames' ? CONTENT.frames : CONTENT.objects).some(x => x.id === id) && !local.hidden.includes(id)) local.hidden.push(id);
 }
 
-/* --- меню «⋯»: экспорт и сброс --- */
+/* --- меню «⋯»: экспорт и сброс. Скрыто; видно, если открыть сайт с #admin в конце адреса --- */
+function syncAdmin() { $('more').hidden = location.hash !== '#admin'; }
+syncAdmin(); addEventListener('hashchange', syncAdmin);
 const moreBtn = $('moreBtn'), moreMenu = $('moreMenu');
 function closeMenu() { moreMenu.hidden = true; moreBtn.setAttribute('aria-expanded', 'false'); }
 moreBtn.addEventListener('click', e => { e.stopPropagation(); const open = moreMenu.hidden; moreMenu.hidden = !open; moreBtn.setAttribute('aria-expanded', String(open)); });
