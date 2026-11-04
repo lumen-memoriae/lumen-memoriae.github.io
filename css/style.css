@@ -67,6 +67,8 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,summary:focus-vi
 .panel .nav button,.x{border:0; background:rgba(42,35,48,.08); width:40px; height:40px; border-radius:50%; display:grid; place-items:center; color:var(--ink)}
 .panel .nav button:hover,.x:hover{background:rgba(42,35,48,.16)}
 .panel .nav .del{width:auto; border-radius:999px; padding:0 14px; font-family:var(--hand); font-size:20px; color:#8a3a3a; margin-right:4px}
+.panel .nav .del.edit{color:var(--ink); margin-right:0}
+@media (max-width:420px){ .panel .nav{gap:5px} .panel .nav .del{padding:0 10px; font-size:18px; margin-right:0} }
 .panel .nav .del.sure{background:#b5463e; color:#fff}
 .x{position:absolute; top:10px; right:10px; width:36px; height:36px}
 

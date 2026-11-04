@@ -1,11 +1,12 @@
 /* =====================================================================
    ХРАНИЛИЩЕ: всё, что добавлено через сайт, сохраняется в браузере
    (IndexedDB — фотографии туда помещаются, в отличие от localStorage).
-   Формат: { frames:[...], objects:[...], hidden:[id,...] }
+   Формат: { frames:[...], objects:[...], hidden:[id,...], edits:{id:{...}} }
+   edits — изменения рамок, которые лежат в js/content.js
    ===================================================================== */
 const Store = (() => {
   const DB = 'our-shelf', OS = 'kv', KEY = 'state';
-  const empty = () => ({ frames: [], objects: [], hidden: [] });
+  const empty = () => ({ frames: [], objects: [], hidden: [], edits: {} });
   let dbp = null;
   function db() {
     if (!dbp) dbp = new Promise((res, rej) => {

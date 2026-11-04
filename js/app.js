@@ -74,7 +74,8 @@ function disposeTree(o) {
 /* ---------- данные: что сейчас висит и стоит ---------- */
 function visibleFrames() {
   const hidden = new Set(local.hidden), seen = new Set(), out = [];
-  CONTENT.frames.concat(local.frames).forEach(f => { if (!hidden.has(f.id) && !seen.has(f.id)) { seen.add(f.id); out.push(f); } });
+  const edits = local.edits || {};
+  CONTENT.frames.concat(local.frames).forEach(f => { if (!hidden.has(f.id) && !seen.has(f.id)) { seen.add(f.id); out.push(edits[f.id] ? Object.assign({}, f, edits[f.id]) : f); } });
   const ph = CONTENT.placeholders || [];
   for (let k = 0; out.length < (CONTENT.minFrames || 0) && ph.length; k++) out.push(Object.assign({ placeholder: true, id: 'ph' + k, src: '' }, ph[k % ph.length]));
   return out;
@@ -264,7 +265,7 @@ function openFrame(i) {
     const f = FRAMES[i];
     $('pTitle').textContent = f.title || ''; $('pCount').textContent = `${i + 1} / ${frames.length}`;
     $('pText').textContent = f.text || ''; $('pText').hidden = !f.text;
-    $('pDel').hidden = !!f.placeholder;
+    $('pDel').hidden = !!f.placeholder; $('pEdit').hidden = !!f.placeholder;
     panel.className = 'panel ' + (portrait ? 'below' : 'side') + ' on'; panel.scrollTop = 0; $('shade').className = (portrait ? 'below' : 'side') + ' on';
   }, reduceMotion ? 0 : 600);
 }
@@ -351,7 +352,7 @@ document.querySelectorAll('dialog.sheet').forEach(d => {
 });
 
 /* --- 1) рамка с фото и текстом --- */
-const dlgFrame = $('dlgFrame'); let pendingPhoto = null;
+const dlgFrame = $('dlgFrame'); let pendingPhoto = null, editingId = null;
 function resetFrameForm() {
   $('frameForm').reset(); pendingPhoto = null; $('fPreview').hidden = true; $('fPreview').removeAttribute('src'); $('dropHint').hidden = false; $('fErr').hidden = true;
 }
@@ -379,34 +380,57 @@ const drop = $('drop');
 ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
 ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, () => drop.classList.remove('over')));
 drop.addEventListener('drop', e => { e.preventDefault(); takePhoto(e.dataTransfer.files[0]); });
-$('addFrameBtn').addEventListener('click', () => { closeMenu(); resetFrameForm(); dlgFrame.showModal(); });
+function openFrameForm(f) {
+  // f — рамка для редактирования; без f — новая рамка
+  closeMenu(); resetFrameForm(); editingId = f ? f.id : null;
+  $('dlgFrameTitle').textContent = f ? 'изменить рамку' : 'новая рамка';
+  $('fSubmit').textContent = f ? 'сохранить' : 'повесить на стену';
+  if (f) {
+    pendingPhoto = f.src; $('fPreview').src = f.src; $('fPreview').hidden = false; $('dropHint').hidden = true;
+    $('fTitle').value = f.title || ''; $('fText').value = f.text || '';
+    const r = document.querySelector(`input[name=fstyle][value="${f.frame}"]`); if (r) r.checked = true;
+  }
+  dlgFrame.showModal();
+}
+$('addFrameBtn').addEventListener('click', () => openFrameForm(null));
+$('pEdit').addEventListener('click', () => { const f = FRAMES[current]; if (f && !f.placeholder) openFrameForm(f); });
 $('frameForm').addEventListener('submit', async e => {
   e.preventDefault();
   const title = $('fTitle').value.trim();
   if (!pendingPhoto) { $('fErr').textContent = 'Сначала выберите фото'; $('fErr').hidden = false; return; }
   if (!title) { $('fErr').textContent = 'Добавьте подпись'; $('fErr').hidden = false; $('fTitle').focus(); return; }
   $('fSubmit').disabled = true;
-  const f = { id: uid('f'), src: pendingPhoto, frame: (document.querySelector('input[name=fstyle]:checked') || {}).value || 'wood', title, text: $('fText').value.trim() };
-  local.frames.push(f); await persist();
+  const data = { src: pendingPhoto, frame: (document.querySelector('input[name=fstyle]:checked') || {}).value || 'wood', title, text: $('fText').value.trim() };
+  let f;
+  if (editingId) {
+    f = { id: editingId };
+    const own = local.frames.find(x => x.id === editingId);
+    if (own) Object.assign(own, data);                       // своя рамка — меняем на месте
+    else { local.edits = local.edits || {}; local.edits[editingId] = data; } // рамка из content.js — запоминаем правку
+  } else { f = Object.assign({ id: uid('f') }, data); local.frames.push(f); }
+  await persist();
   $('fSubmit').disabled = false; dlgFrame.close();
+  const wasEdit = !!editingId; editingId = null;
+  if (wasEdit) { view = 'home'; current = -1; panel.classList.remove('on'); }
   await refresh();
-  const idx = FRAMES.findIndex(x => x.id === f.id); toast('рамка висит на стене ✨');
+  const idx = FRAMES.findIndex(x => x.id === f.id); toast(wasEdit ? 'рамка обновлена ✨' : 'рамка висит на стене ✨');
   if (idx >= 0) setTimeout(() => openFrame(idx), 250);
 });
 
 /* --- снять рамку (с подтверждением вторым нажатием) --- */
 const pDel = $('pDel'); let delArmed = 0;
-function resetDel() { clearTimeout(delArmed); delArmed = 0; pDel.classList.remove('sure'); pDel.textContent = 'снять'; }
+function resetDel() { clearTimeout(delArmed); delArmed = 0; pDel.classList.remove('sure'); pDel.textContent = 'удалить'; }
 pDel.addEventListener('click', async () => {
-  if (!delArmed) { pDel.classList.add('sure'); pDel.textContent = 'точно снять?'; delArmed = setTimeout(resetDel, 3500); return; }
+  if (!delArmed) { pDel.classList.add('sure'); pDel.textContent = 'точно удалить?'; delArmed = setTimeout(resetDel, 5000); return; }
   resetDel();
   const f = FRAMES[current]; if (!f || f.placeholder) return;
   removeItem(f.id, 'frames');
-  closeFrame(); await persist(); await refresh(); toast('рамку сняли');
+  closeFrame(); await persist(); await refresh(); toast('рамка удалена');
 });
 function removeItem(id, kind) {
   const i = local[kind].findIndex(x => x.id === id);
   if (i >= 0) local[kind].splice(i, 1);
+  if (local.edits) delete local.edits[id];
   if ((kind === 'frames' ? CONTENT.frames : CONTENT.objects).some(x => x.id === id) && !local.hidden.includes(id)) local.hidden.push(id);
 }
 
